@@ -2,6 +2,9 @@
 import { Suspense } from "react";
 import ClientWidget from "./ClientWidget";
 
+// Empêche le pré-rendu statique et les erreurs liées au CSR
+export const dynamic = "force-dynamic";
+
 export default function WidgetPage() {
   return (
     <Suspense
