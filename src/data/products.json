@@ -1,0 +1,119 @@
+[
+  {
+    "id": "sku-chemise-lin-bleu",
+    "title": "Chemise en lin bleu",
+    "description": "Chemise légère 100% lin, idéale pour l'été. Coupe régulière.",
+    "image": "https://images.unsplash.it/photo-1520975916090-3105956dac38?w=640",
+    "variants": [
+      { "id": "sku-chemise-lin-bleu-S", "title": "S", "price": 49.9, "currency": "EUR", "available": true },
+      { "id": "sku-chemise-lin-bleu-M", "title": "M", "price": 49.9, "currency": "EUR", "available": true },
+      { "id": "sku-chemise-lin-bleu-L", "title": "L", "price": 49.9, "currency": "EUR", "available": false }
+    ],
+    "tags": ["chemise", "bleu", "lin", "été", "haut"]
+  },
+  {
+    "id": "sku-chemise-coton-blanc",
+    "title": "Chemise en coton blanche",
+    "description": "Chemise classique 100% coton, col français.",
+    "image": "https://images.unsplash.it/photo-1495121605193-b116b5b09c0a?w=640",
+    "variants": [
+      { "id": "sku-chemise-coton-blanc-S", "title": "S", "price": 39.9, "currency": "EUR", "available": true },
+      { "id": "sku-chemise-coton-blanc-M", "title": "M", "price": 39.9, "currency": "EUR", "available": true },
+      { "id": "sku-chemise-coton-blanc-L", "title": "L", "price": 39.9, "currency": "EUR", "available": true }
+    ],
+    "tags": ["chemise", "blanc", "coton", "bureau", "haut"]
+  },
+  {
+    "id": "sku-chemise-noire-slim",
+    "title": "Chemise noire slim",
+    "description": "Chemise coupe ajustée, tissu stretch confortable.",
+    "image": "https://images.unsplash.it/photo-1520975916090-3105956dac38?w=640",
+    "variants": [
+      { "id": "sku-chemise-noire-slim-M", "title": "M", "price": 59.9, "currency": "EUR", "available": true },
+      { "id": "sku-chemise-noire-slim-L", "title": "L", "price": 59.9, "currency": "EUR", "available": true }
+    ],
+    "tags": ["chemise", "noir", "stretch", "soirée", "haut"]
+  },
+  {
+    "id": "sku-tee-shirt-blanc",
+    "title": "T-shirt blanc",
+    "description": "T-shirt col rond, coton bio 180g.",
+    "image": "https://images.unsplash.it/photo-1520975942302-7d8a4d8f5b51?w=640",
+    "variants": [
+      { "id": "sku-tee-shirt-blanc-S", "title": "S", "price": 14.9, "currency": "EUR", "available": true },
+      { "id": "sku-tee-shirt-blanc-M", "title": "M", "price": 14.9, "currency": "EUR", "available": true },
+      { "id": "sku-tee-shirt-blanc-L", "title": "L", "price": 14.9, "currency": "EUR", "available": true }
+    ],
+    "tags": ["tee-shirt", "t-shirt", "blanc", "casual", "haut"]
+  },
+  {
+    "id": "sku-pantalon-chino-beige",
+    "title": "Pantalon chino beige",
+    "description": "Chino coupe droite, confortable au quotidien.",
+    "image": "https://images.unsplash.it/photo-1520976017934-7b1c4f7a5b90?w=640",
+    "variants": [
+      { "id": "sku-pantalon-chino-beige-38", "title": "38", "price": 49.0, "currency": "EUR", "available": true },
+      { "id": "sku-pantalon-chino-beige-40", "title": "40", "price": 49.0, "currency": "EUR", "available": true },
+      { "id": "sku-pantalon-chino-beige-42", "title": "42", "price": 49.0, "currency": "EUR", "available": true }
+    ],
+    "tags": ["pantalon", "chino", "beige", "bas"]
+  },
+  {
+    "id": "sku-robe-rouge",
+    "title": "Robe rouge fluide",
+    "description": "Robe mi-longue, tissu fluide, parfaite pour les cérémonies.",
+    "image": "https://images.unsplash.it/photo-1542060748-10c28b62716f?w=640",
+    "variants": [
+      { "id": "sku-robe-rouge-XS", "title": "XS", "price": 69.9, "currency": "EUR", "available": true },
+      { "id": "sku-robe-rouge-S", "title": "S", "price": 69.9, "currency": "EUR", "available": true },
+      { "id": "sku-robe-rouge-M", "title": "M", "price": 69.9, "currency": "EUR", "available": true }
+    ],
+    "tags": ["robe", "rouge", "cérémonie", "haut"]
+  },
+  {
+    "id": "sku-robe-bleu-marine",
+    "title": "Robe bleu marine",
+    "description": "Robe élégante, manches courtes, matière fluide.",
+    "image": "https://images.unsplash.it/photo-1542060748-10c28b62716f?w=640",
+    "variants": [
+      { "id": "sku-robe-bleu-marine-S", "title": "S", "price": 64.9, "currency": "EUR", "available": true },
+      { "id": "sku-robe-bleu-marine-M", "title": "M", "price": 64.9, "currency": "EUR", "available": true }
+    ],
+    "tags": ["robe", "bleu", "marine", "haut"]
+  },
+  {
+    "id": "sku-baskets-blanches",
+    "title": "Baskets blanches",
+    "description": "Baskets en cuir synthétique, semelle confortable.",
+    "image": "https://images.unsplash.it/photo-1542291026-7eec264c27ff?w=640",
+    "variants": [
+      { "id": "sku-baskets-blanches-40", "title": "40", "price": 59, "currency": "EUR", "available": true },
+      { "id": "sku-baskets-blanches-41", "title": "41", "price": 59, "currency": "EUR", "available": true },
+      { "id": "sku-baskets-blanches-42", "title": "42", "price": 59, "currency": "EUR", "available": true }
+    ],
+    "tags": ["baskets", "sneakers", "tennis", "blanc", "chaussures", "bas"]
+  },
+  {
+    "id": "sku-baskets-noires",
+    "title": "Baskets noires",
+    "description": "Baskets légères, look urbain.",
+    "image": "https://images.unsplash.it/photo-1542291026-7eec264c27ff?w=640",
+    "variants": [
+      { "id": "sku-baskets-noires-41", "title": "41", "price": 62, "currency": "EUR", "available": true },
+      { "id": "sku-baskets-noires-42", "title": "42", "price": 62, "currency": "EUR", "available": true }
+    ],
+    "tags": ["baskets", "sneakers", "noir", "chaussures", "bas"]
+  },
+  {
+    "id": "sku-veste-lin-beige",
+    "title": "Veste en lin beige",
+    "description": "Veste légère en lin mélangé, look estival élégant.",
+    "image": "https://images.unsplash.it/photo-1551024601-bec78aea704b?w=640",
+    "variants": [
+      { "id": "sku-veste-lin-beige-S", "title": "S", "price": 129, "currency": "EUR", "available": true },
+      { "id": "sku-veste-lin-beige-M", "title": "M", "price": 129, "currency": "EUR", "available": true },
+      { "id": "sku-veste-lin-beige-L", "title": "L", "price": 129, "currency": "EUR", "available": true }
+    ],
+    "tags": ["veste", "beige", "lin", "été", "haut"]
+  }
+]
