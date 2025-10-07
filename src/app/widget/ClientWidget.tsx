@@ -19,29 +19,21 @@ export default function ClientWidget() {
 
     if (!catalog) return;
 
-    // On passe par notre proxy pour éviter CORS
     const proxied = `${window.location.origin}/api/fetch?url=${encodeURIComponent(catalog)}`;
 
     fetch(proxied, { cache: "no-store" })
       .then(r => r.json())
       .then((data) => {
-        // On accepte un tableau brut ou { products: [...] }
         if (Array.isArray(data)) setExternalProducts(data as Product[]);
         else if (Array.isArray((data as any).products)) setExternalProducts((data as any).products);
-        else {
-          console.warn("Format JSON inattendu. Attendu: tableau de produits ou { products: [...] }.");
-          setExternalProducts(null);
-        }
+        else setExternalProducts(null);
       })
-      .catch(err => {
-        console.error("Erreur de chargement du catalogue externe:", err);
-        setExternalProducts(null);
-      });
+      .catch(() => setExternalProducts(null));
   }, []);
 
   const props = useMemo(() => ({
     welcomeMessage: welcome,
-    products: externalProducts || undefined, // si null → VoiceAssistant utilisera son catalogue local
+    products: externalProducts || undefined,
   }), [welcome, externalProducts]);
 
   return (

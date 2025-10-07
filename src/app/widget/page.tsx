@@ -1,25 +1,24 @@
 // src/app/widget/page.tsx
-"use client";
-
-import { useSearchParams } from "next/navigation";
-import { useMemo } from "react";
-import VoiceAssistant from "../components/VoiceAssistant";
+import { Suspense } from "react";
+import ClientWidget from "./ClientWidget";
 
 export default function WidgetPage() {
-  const search = useSearchParams();
-  const welcome = search.get("welcome") || undefined;
-  const theme   = search.get("theme")   || undefined;
-  const catalog = search.get("catalog") || undefined;
-
-  // Pour l’instant on n’applique que 'welcome' (message d’accueil).
-  // 'theme' et 'catalog' serviront ensuite (thème visuel & catalogue externe).
-  const props = useMemo(() => ({
-    welcomeMessage: welcome
-  }), [welcome]);
-
   return (
-    <div style={{ width: "100%", height: "100vh", overflow: "hidden", background: "transparent" }}>
-      <VoiceAssistant {...props} />
-    </div>
+    <Suspense
+      fallback={
+        <div style={{
+          width: "100%",
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif"
+        }}>
+          Chargement du widget…
+        </div>
+      }
+    >
+      <ClientWidget />
+    </Suspense>
   );
 }
