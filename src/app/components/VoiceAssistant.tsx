@@ -28,7 +28,7 @@ type CartItem = {
 
 type Props = {
   welcomeMessage?: string;
-  products?: Product[]; // catalogue injecté par ClientWidget (externe) ou null → on chargera le local
+  products?: Product[];
 };
 
 // ---------- Utilitaires ----------
@@ -44,7 +44,7 @@ function includesCI(hay: string, needle: string) {
   return hay.toLowerCase().includes(needle.toLowerCase());
 }
 
-// ---------- Fallback Image (évite les images cassées) ----------
+// ---------- Fallback Image ----------
 function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [errored, setErrored] = React.useState(false);
   const { alt, ...rest } = props;
@@ -61,7 +61,6 @@ function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
 
 // ---------- Composant principal ----------
 export default function VoiceAssistant({ welcomeMessage, products }: Props) {
-  // Vue courante : "home" (accueil) ou "results"
   const [view, setView] = React.useState<"home" | "results">("home");
 
   const [query, setQuery] = React.useState("");
@@ -71,6 +70,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
   const [listening, setListening] = React.useState(false);
   const [results, setResults] = React.useState<Product[]>([]);
   const [suggestions, setSuggestions] = React.useState<Product[]>([]);
+  const [showAllSuggestions, setShowAllSuggestions] = React.useState(false);
+
   const [cart, setCart] = React.useState<CartItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -81,7 +82,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
   });
 
-  // Catalogue local si aucun n'est fourni
+  // catalogue local si rien n'est passé en props
   const [localProducts, setLocalProducts] = React.useState<Product[] | null>(null);
   React.useEffect(() => {
     if (products) return;
@@ -97,9 +98,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             setLocalProducts(arr as Product[]);
             return;
           }
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     })();
   }, [products]);
@@ -109,7 +108,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     [products, localProducts]
   );
 
-  // Sauvegarde du panier
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("va_cart", JSON.stringify(cart));
@@ -172,7 +170,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     const isClear = /(vide|vider)\s(le\s)?panier/.test(raw);
     const isCheckout = /(valide(r)?|paye(r)?|paiement|checkout|caisse)/.test(raw);
 
-    // taille éventuelle
     const tokens = raw.split(/\s+/).filter(Boolean);
     let size: string | null = null;
     for (let i = tokens.length - 1; i >= 0; i--) {
@@ -183,7 +180,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       }
     }
 
-    // couleurs simples
     const colors = ["noir", "noire", "noires", "bleu", "bleue", "bleues", "blanc", "blanche", "blanches", "rouge"];
     const color = colors.find((c) => raw.includes(c)) || null;
 
@@ -205,18 +201,18 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       return ok;
     });
 
-    const sugg = allProducts.filter((p) => !filtered.includes(p)).slice(0, 6);
+    const sugg = allProducts.filter((p) => !filtered.includes(p)).slice(0, 12);
     setResults(filtered.slice(0, 12));
     setSuggestions(sugg);
+    setShowAllSuggestions(false);
     setView("results");
   }
 
   // ---------- Panier ----------
   function addToCartByText(q: string) {
-    const { size, color } = extractIntent(q);
+    const { size } = extractIntent(q);
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
 
-    // sélectionne le produit le plus pertinent par inclusion de mots
     const candidates = allProducts.filter((p) => {
       const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
       return words.every((w) => text.includes(w));
@@ -227,7 +223,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       return;
     }
 
-    // choisir la variante
     let chosen: Variant | undefined;
     if (size) {
       chosen = target.variants.find(
@@ -253,6 +248,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     });
 
     setTranscript(`✅ Ajouté au panier : ${target.title} (${chosen.title})`);
+    setView("results");
   }
 
   function clearCart() {
@@ -260,7 +256,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     setTranscript("🧺 Panier vidé.");
   }
 
-  // ---------- Navigation : retour à l’accueil ----------
+  // ---------- Navigation ----------
   function goHome() {
     setResults([]);
     setSuggestions([]);
@@ -269,14 +265,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     setTranscript(welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊");
   }
 
-  // ---------- Exécution principale ----------
   function handleSearch() {
     const q = (query || "").trim();
     if (!q) {
       setTranscript("Je n'ai rien entendu. Clique sur 🎙️ et essaie encore.");
       return;
     }
-
     const { isAdd, isClear, isCheckout } = extractIntent(q);
     if (isClear) {
       clearCart();
@@ -289,10 +283,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
     if (isAdd) {
       addToCartByText(q);
-      setView("results");
       return;
     }
-
     setTranscript(`D'accord, je cherche ${q}.`);
     searchProducts(q);
   }
@@ -310,7 +302,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
       }}
     >
-      {/* Bulle micro flottante */}
+      {/* Micro flottant */}
       <button
         onClick={() => (listening ? stopListening() : startListening())}
         title="Parler"
@@ -334,15 +326,34 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       {/* Fenêtre */}
       <div
         style={{
-          width: 360,
+          width: 380,
           maxWidth: "90vw",
           background: "#fff",
           borderRadius: 14,
           boxShadow: "0 20px 40px rgba(0,0,0,.18)",
-          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          // hauteur fixe + zone centrale scrollable
+          maxHeight: 640,
         }}
       >
-        <div style={{ background: "#0ea5e9", color: "#fff", padding: "10px 12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {/* Barre titre STICKY */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 2,
+            background: "#0ea5e9",
+            color: "#fff",
+            padding: "10px 12px",
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderTopLeftRadius: 14,
+            borderTopRightRadius: 14,
+          }}
+        >
           <span>Voice Assistant</span>
           {view === "results" && (
             <button
@@ -363,18 +374,21 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           )}
         </div>
 
-        {/* Zone messages */}
-        <div style={{ minHeight: 120, maxHeight: 220, overflow: "auto", padding: 12 }}>
-          {view === "home" && (
-            <div style={{ fontSize: 14 }}>
-              {welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"}
-            </div>
-          )}
-          {view === "results" && transcript ? <div style={{ fontSize: 14 }}>{transcript}</div> : null}
-        </div>
+        {/* CONTENU SCROLLABLE */}
+        <div style={{ overflowY: "auto", padding: 12 }}>
+          {/* Messages */}
+          <div style={{ minHeight: 24, marginBottom: 8 }}>
+            {view === "home" && (
+              <div style={{ fontSize: 14 }}>
+                {welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"}
+              </div>
+            )}
+            {view === "results" && transcript ? (
+              <div style={{ fontSize: 14 }}>{transcript}</div>
+            ) : null}
+          </div>
 
-        {/* Carte assistant */}
-        <div style={{ padding: 12 }}>
+          {/* Carte assistant */}
           <div
             style={{
               display: "grid",
@@ -383,6 +397,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
               background: "#fafafa",
               padding: 12,
               borderRadius: 12,
+              marginBottom: 12,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -477,10 +492,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
               </div>
             )}
           </div>
-        </div>
 
-        {/* Résultats */}
-        <div style={{ padding: "0 12px 12px 12px" }}>
+          {/* Résultats */}
           {results.length > 0 && (
             <div
               style={{
@@ -488,6 +501,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                 borderRadius: 12,
                 border: "1px solid #e5e7eb",
                 padding: 12,
+                marginBottom: 12,
               }}
             >
               <div style={{ fontWeight: 800, marginBottom: 8 }}>Résultats</div>
@@ -576,77 +590,93 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
               </div>
             </div>
           )}
-        </div>
 
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <div
-            style={{
-              padding: "0 12px 12px 12px",
-              background: "#fff",
-              borderTop: "1px solid #e5e7eb",
-            }}
-          >
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>
-              Tu pourrais aimer aussi
-            </div>
-            <div style={{ display: "grid", gap: 12 }}>
-              {suggestions.slice(0, 6).map((p) => (
-                <div
-                  key={p.id}
+          {/* Suggestions repliables */}
+          {suggestions.length > 0 && (
+            <div
+              style={{
+                background: "#fff",
+                borderRadius: 12,
+                border: "1px solid #e5e7eb",
+                padding: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 800 }}>Tu pourrais aimer aussi</div>
+                <button
+                  onClick={() => setShowAllSuggestions((s) => !s)}
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "72px 1fr",
-                    gap: 12,
-                    alignItems: "center",
+                    background: "#f1f5f9",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 8,
+                    padding: "4px 8px",
+                    fontSize: 12,
+                    cursor: "pointer",
                   }}
                 >
-                  <FallbackImage
-                    src={p.image}
-                    alt={p.title}
-                    width={72}
-                    height={72}
+                  {showAllSuggestions ? "Réduire" : "Afficher plus"}
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
+                {(showAllSuggestions ? suggestions : suggestions.slice(0, 3)).map((p) => (
+                  <div
+                    key={p.id}
                     style={{
-                      width: 72,
-                      height: 72,
-                      objectFit: "cover",
-                      borderRadius: 8,
+                      display: "grid",
+                      gridTemplateColumns: "72px 1fr",
+                      gap: 12,
+                      alignItems: "center",
                     }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{p.title}</div>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>
-                      {p.description}
-                    </div>
-                    <div
+                  >
+                    <FallbackImage
+                      src={p.image}
+                      alt={p.title}
+                      width={72}
+                      height={72}
                       style={{
-                        display: "flex",
-                        gap: 8,
-                        marginTop: 6,
-                        flexWrap: "wrap",
+                        width: 72,
+                        height: 72,
+                        objectFit: "cover",
+                        borderRadius: 8,
                       }}
-                    >
-                      {p.variants.map((v) => (
-                        <div
-                          key={v.id}
-                          style={{
-                            fontSize: 12,
-                            background: "#f8fafc",
-                            border: "1px solid #e5e7eb",
-                            borderRadius: 8,
-                            padding: "4px 8px",
-                          }}
-                        >
-                          {v.title} · {formatPrice(v.price, v.currency)}
-                        </div>
-                      ))}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{p.title}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>
+                        {p.description}
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          marginTop: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {p.variants.map((v) => (
+                          <div
+                            key={v.id}
+                            style={{
+                              fontSize: 12,
+                              background: "#f8fafc",
+                              border: "1px solid #e5e7eb",
+                              borderRadius: 8,
+                              padding: "4px 8px",
+                            }}
+                          >
+                            {v.title} · {formatPrice(v.price, v.currency)}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+        {/* FIN contenu scrollable */}
       </div>
     </div>
   );
