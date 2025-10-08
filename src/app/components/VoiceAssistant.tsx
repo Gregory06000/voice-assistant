@@ -28,7 +28,7 @@ type CartItem = {
 
 type Props = {
   welcomeMessage?: string;
-  products?: Product[];
+  products?: Product[]; // catalogue injecté par ClientWidget (externe) ou null → on chargera le local
 };
 
 // ---------- Utilitaires ----------
@@ -44,12 +44,11 @@ function includesCI(hay: string, needle: string) {
   return hay.toLowerCase().includes(needle.toLowerCase());
 }
 
-// ---------- Étape 2 : Fallback Image ----------
+// ---------- Fallback Image (évite les images cassées) ----------
 function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [errored, setErrored] = React.useState(false);
   const { alt, ...rest } = props;
-  const placeholder = "https://via.placeholder.com/72x72?text=%20"; // image neutre
-
+  const placeholder = "https://via.placeholder.com/72x72?text=%20";
   return (
     <img
       alt={alt || ""}
@@ -62,6 +61,9 @@ function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
 
 // ---------- Composant principal ----------
 export default function VoiceAssistant({ welcomeMessage, products }: Props) {
+  // Vue courante : "home" (accueil) ou "results"
+  const [view, setView] = React.useState<"home" | "results">("home");
+
   const [query, setQuery] = React.useState("");
   const [transcript, setTranscript] = React.useState<string | null>(
     welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"
@@ -79,7 +81,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
   });
 
-  // Catalogue interne si aucun n’est fourni
+  // Catalogue local si aucun n'est fourni
   const [localProducts, setLocalProducts] = React.useState<Product[] | null>(null);
   React.useEffect(() => {
     if (products) return;
@@ -95,12 +97,17 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             setLocalProducts(arr as Product[]);
             return;
           }
-        } catch {}
+        } catch {
+          // ignore
+        }
       }
     })();
   }, [products]);
 
-  const allProducts: Product[] = React.useMemo(() => products ?? localProducts ?? [], [products, localProducts]);
+  const allProducts: Product[] = React.useMemo(
+    () => products ?? localProducts ?? [],
+    [products, localProducts]
+  );
 
   // Sauvegarde du panier
   React.useEffect(() => {
@@ -149,10 +156,10 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     setListening(false);
   }
 
-  // ---------- Analyse simple de la requête ----------
+  // ---------- NLU simple ----------
   function normalizeSizeToken(tok: string) {
     const t = tok.trim().toLowerCase();
-    const known = ["xs", "s", "m", "l", "xl", "xxl"];
+    const known = ["xs", "s", "m", "l", "xl", "xxl", "xxxl"];
     if (known.includes(t)) return t.toUpperCase();
     const num = parseInt(t, 10);
     if (!isNaN(num)) return String(num);
@@ -163,8 +170,9 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     const raw = q.toLowerCase();
     const isAdd = /(ajoute|mets?|mettre)\s(au|dans)\s(le\s)?panier/.test(raw);
     const isClear = /(vide|vider)\s(le\s)?panier/.test(raw);
-    const isCheckout = /(valide|paye|paiement|checkout|caisse)/.test(raw);
+    const isCheckout = /(valide(r)?|paye(r)?|paiement|checkout|caisse)/.test(raw);
 
+    // taille éventuelle
     const tokens = raw.split(/\s+/).filter(Boolean);
     let size: string | null = null;
     for (let i = tokens.length - 1; i >= 0; i--) {
@@ -175,7 +183,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       }
     }
 
-    const colors = ["noir", "noire", "bleu", "bleue", "blanc", "blanche", "rouge"];
+    // couleurs simples
+    const colors = ["noir", "noire", "noires", "bleu", "bleue", "bleues", "blanc", "blanche", "blanches", "rouge"];
     const color = colors.find((c) => raw.includes(c)) || null;
 
     return { isAdd, isClear, isCheckout, size, color, raw };
@@ -184,7 +193,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
   // ---------- Recherche ----------
   function searchProducts(q: string) {
     const { color } = extractIntent(q);
-
     const filtered = allProducts.filter((p) => {
       let ok = true;
       if (color) ok = ok && (includesCI(p.title, color) || p.tags.some((t) => includesCI(t, color)));
@@ -200,26 +208,39 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     const sugg = allProducts.filter((p) => !filtered.includes(p)).slice(0, 6);
     setResults(filtered.slice(0, 12));
     setSuggestions(sugg);
+    setView("results");
   }
 
   // ---------- Panier ----------
   function addToCartByText(q: string) {
     const { size, color } = extractIntent(q);
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+
+    // sélectionne le produit le plus pertinent par inclusion de mots
     const candidates = allProducts.filter((p) => {
-      let ok = true;
-      if (color) ok = ok && (includesCI(p.title, color) || p.tags.some((t) => includesCI(t, color)));
-      return ok;
+      const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
+      return words.every((w) => text.includes(w));
     });
     const target = candidates[0] ?? allProducts[0];
     if (!target) {
       setTranscript("Je n'ai pas trouvé de produit à ajouter.");
       return;
     }
+
+    // choisir la variante
     let chosen: Variant | undefined;
     if (size) {
-      chosen = target.variants.find((v) => v.title.toLowerCase() === size.toLowerCase());
+      chosen = target.variants.find(
+        (v) =>
+          v.title.toLowerCase() === size.toLowerCase() ||
+          v.title.toLowerCase() === `taille ${size.toLowerCase()}`
+      );
     }
     if (!chosen) chosen = target.variants.find((v) => v.available) ?? target.variants[0];
+    if (!chosen) {
+      setTranscript("Aucune variante disponible pour ce produit.");
+      return;
+    }
 
     setCart((prev) => {
       const found = prev.find((i) => i.productId === target.id && i.variantId === chosen!.id);
@@ -228,10 +249,10 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           i.productId === target.id && i.variantId === chosen!.id ? { ...i, qty: i.qty + 1 } : i
         );
       }
-      return [...prev, { productId: target.id, variantId: chosen!.id, qty: 1 }];
+      return [...prev, { productId: target.id, variantId: chosen.id, qty: 1 }];
     });
 
-    setTranscript(`✅ Ajouté au panier : ${target.title} — ${chosen.title}`);
+    setTranscript(`✅ Ajouté au panier : ${target.title} (${chosen.title})`);
   }
 
   function clearCart() {
@@ -239,7 +260,16 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     setTranscript("🧺 Panier vidé.");
   }
 
-  // ---------- Étape 3 : handleSearch corrigé ----------
+  // ---------- Navigation : retour à l’accueil ----------
+  function goHome() {
+    setResults([]);
+    setSuggestions([]);
+    setQuery("");
+    setView("home");
+    setTranscript(welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊");
+  }
+
+  // ---------- Exécution principale ----------
   function handleSearch() {
     const q = (query || "").trim();
     if (!q) {
@@ -253,11 +283,13 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       return;
     }
     if (isCheckout) {
-      setTranscript("🧾 Ouverture du panier de démonstration…");
+      setTranscript("🧾 (Démo) Ouverture du panier…");
+      setView("results");
       return;
     }
     if (isAdd) {
       addToCartByText(q);
+      setView("results");
       return;
     }
 
@@ -278,6 +310,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
       }}
     >
+      {/* Bulle micro flottante */}
       <button
         onClick={() => (listening ? stopListening() : startListening())}
         title="Parler"
@@ -298,6 +331,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         🎙️
       </button>
 
+      {/* Fenêtre */}
       <div
         style={{
           width: 360,
@@ -308,14 +342,38 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           overflow: "hidden",
         }}
       >
-        <div style={{ background: "#0ea5e9", color: "#fff", padding: "10px 12px", fontWeight: 700 }}>
-          Voice Assistant
+        <div style={{ background: "#0ea5e9", color: "#fff", padding: "10px 12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>Voice Assistant</span>
+          {view === "results" && (
+            <button
+              onClick={goHome}
+              title="Retour à l’accueil"
+              style={{
+                background: "#0284c7",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 10px",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              ⬅️ Accueil
+            </button>
+          )}
         </div>
 
+        {/* Zone messages */}
         <div style={{ minHeight: 120, maxHeight: 220, overflow: "auto", padding: 12 }}>
-          {transcript ? <div style={{ fontSize: 14 }}>{transcript}</div> : null}
+          {view === "home" && (
+            <div style={{ fontSize: 14 }}>
+              {welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"}
+            </div>
+          )}
+          {view === "results" && transcript ? <div style={{ fontSize: 14 }}>{transcript}</div> : null}
         </div>
 
+        {/* Carte assistant */}
         <div style={{ padding: 12 }}>
           <div
             style={{
@@ -344,7 +402,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
               <div style={{ fontWeight: 700 }}>Assistant vocal</div>
             </div>
 
-            {/* Champ input corrigé */}
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -395,9 +452,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                 Effacer
               </button>
               <button
-                onClick={() =>
-                  setTranscript(`Panier : ${cartCount} article(s) — (démo panier local)`)
-                }
+                onClick={() => setTranscript(`Panier : ${cartCount} article(s).`)}
                 style={{
                   background: "#22c55e",
                   color: "#fff",
@@ -592,13 +647,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             </div>
           </div>
         )}
-
-        {/* Bas de carte */}
-        <div style={{ padding: "0 12px 14px 12px" }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            ⚠️ Démo : panier local (localStorage). En prod réelle, branche un panier e-commerce.
-          </div>
-        </div>
       </div>
     </div>
   );
