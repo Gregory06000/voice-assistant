@@ -1,3 +1,4 @@
+// src/app/widget/ClientWidget.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -5,6 +6,22 @@ import VoiceAssistant from "../components/VoiceAssistant";
 
 type Variant = { id: string; title: string; price: number; currency: string; available: boolean };
 type Product = { id: string; title: string; description: string; image: string; variants: Variant[]; tags: string[] };
+
+function normalizeImage(urlStr: string, catalogUrl: string): string {
+  try {
+    // URL absolue ? on renvoie tel quel
+    if (/^https?:\/\//i.test(urlStr)) return urlStr;
+    // chemin absolu site (/images/...) → on le résout sur l'origin du catalogue
+    const base = new URL(catalogUrl);
+    if (urlStr.startsWith("/")) {
+      return `${base.origin}${urlStr}`;
+    }
+    // chemin relatif (images/...) → on le résout contre l’URL complète du catalogue
+    return new URL(urlStr, catalogUrl).toString();
+  } catch {
+    return urlStr;
+  }
+}
 
 export default function ClientWidget() {
   const [externalProducts, setExternalProducts] = useState<Product[] | null>(null);
@@ -23,9 +40,20 @@ export default function ClientWidget() {
     fetch(proxied, { cache: "no-store" })
       .then(r => r.json())
       .then((data) => {
-        if (Array.isArray(data)) setExternalProducts(data as Product[]);
-        else if (Array.isArray((data as any).products)) setExternalProducts((data as any).products);
-        else setExternalProducts(null);
+        let products: Product[] | null = null;
+
+        if (Array.isArray(data)) products = data as Product[];
+        else if (Array.isArray((data as any).products)) products = (data as any).products as Product[];
+        else products = null;
+
+        if (products && catalog) {
+          products = products.map(p => ({
+            ...p,
+            image: p.image ? normalizeImage(p.image, catalog) : p.image,
+          }));
+        }
+
+        setExternalProducts(products);
       })
       .catch(() => setExternalProducts(null));
   }, []);
