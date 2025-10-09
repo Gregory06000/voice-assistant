@@ -31,7 +31,7 @@ type Props = {
   products?: Product[];
 };
 
-// ---------- Utilitaires ----------
+// ---------- Utils ----------
 function formatPrice(p: number, c: string) {
   try {
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency: c }).format(p);
@@ -39,9 +39,11 @@ function formatPrice(p: number, c: string) {
     return `${p.toFixed(2)} ${c}`;
   }
 }
-
 function includesCI(hay: string, needle: string) {
   return hay.toLowerCase().includes(needle.toLowerCase());
+}
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
 // ---------- Fallback Image ----------
@@ -61,8 +63,10 @@ function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
 
 // ---------- Composant principal ----------
 export default function VoiceAssistant({ welcomeMessage, products }: Props) {
+  // Navigation
   const [view, setView] = React.useState<"home" | "results">("home");
 
+  // États UI
   const [query, setQuery] = React.useState("");
   const [transcript, setTranscript] = React.useState<string | null>(
     welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"
@@ -71,7 +75,9 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
   const [results, setResults] = React.useState<Product[]>([]);
   const [suggestions, setSuggestions] = React.useState<Product[]>([]);
   const [showAllSuggestions, setShowAllSuggestions] = React.useState(false);
+  const [showCart, setShowCart] = React.useState(false); // ⬅️ NOUVEAU : panneau panier
 
+  // Panier
   const [cart, setCart] = React.useState<CartItem[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -82,7 +88,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
   });
 
-  // catalogue local si rien n'est passé en props
+  // Catalogue local si rien n'est passé
   const [localProducts, setLocalProducts] = React.useState<Product[] | null>(null);
   React.useEffect(() => {
     if (products) return;
@@ -116,7 +122,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
 
   // ---------- Reconnaissance vocale ----------
   const recognitionRef = React.useRef<any | null>(null);
-
   function ensureRecognition(): boolean {
     if (typeof window === "undefined") return false;
     const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
@@ -137,7 +142,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
     return true;
   }
-
   function startListening() {
     if (!ensureRecognition()) {
       setTranscript("La reconnaissance vocale n'est pas disponible dans ce navigateur.");
@@ -146,21 +150,45 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     setListening(true);
     recognitionRef.current!.start();
   }
-
   function stopListening() {
-    try {
-      recognitionRef.current?.stop();
-    } catch {}
+    try { recognitionRef.current?.stop(); } catch {}
     setListening(false);
   }
 
-  // ---------- NLU simple ----------
+  // ---------- NLU simple + scoring ----------
+  const STOPWORDS = new Set([
+    "ajoute","ajouter","mets","mettre","met","dans","au","aux","à","le","la","les","un","une","des","du","de","d",
+    "panier","stp","s'il","te","plaît","svp","en","et","sur","pour","me","moi","lequel","laquelle"
+  ]);
+  const CATEGORY_SYNONYMS: Record<string,string[]> = {
+    baskets: ["basket","baskets","sneaker","sneakers","chaussure","chaussures"],
+    chemise: ["chemise","chemises","shirt","chem"],
+    robe: ["robe","robes","dress"],
+    pantalon: ["pantalon","pantalons","chino","jean","jeans"]
+  };
+  const COLORS = ["noir","noire","noires","bleu","bleue","bleues","blanc","blanche","blanches","rouge","rouges","beige","vert","verte"];
+
   function normalizeSizeToken(tok: string) {
     const t = tok.trim().toLowerCase();
-    const known = ["xs", "s", "m", "l", "xl", "xxl", "xxxl"];
+    const known = ["xs","s","m","l","xl","xxl","xxxl"];
     if (known.includes(t)) return t.toUpperCase();
     const num = parseInt(t, 10);
     if (!isNaN(num)) return String(num);
+    return null;
+  }
+
+  function tokenizeMeaningful(raw: string) {
+    return raw
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean)
+      .filter(w => !STOPWORDS.has(w));
+  }
+
+  function guessCategory(tokens: string[]): string | null {
+    for (const [cat, syns] of Object.entries(CATEGORY_SYNONYMS)) {
+      if (tokens.some(t => syns.includes(t))) return cat;
+    }
     return null;
   }
 
@@ -174,50 +202,79 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     let size: string | null = null;
     for (let i = tokens.length - 1; i >= 0; i--) {
       const n = normalizeSizeToken(tokens[i]);
-      if (n) {
-        size = n;
-        break;
-      }
+      if (n) { size = n; break; }
     }
+    const color = COLORS.find(c => raw.includes(c)) || null;
 
-    const colors = ["noir", "noire", "noires", "bleu", "bleue", "bleues", "blanc", "blanche", "blanches", "rouge"];
-    const color = colors.find((c) => raw.includes(c)) || null;
+    const cleanTokens = tokenizeMeaningful(raw);
+    const category = guessCategory(cleanTokens);
 
-    return { isAdd, isClear, isCheckout, size, color, raw };
+    return { isAdd, isClear, isCheckout, size, color, cleanTokens, category, raw };
   }
 
   // ---------- Recherche ----------
   function searchProducts(q: string) {
-    const { color } = extractIntent(q);
-    const filtered = allProducts.filter((p) => {
-      let ok = true;
-      if (color) ok = ok && (includesCI(p.title, color) || p.tags.some((t) => includesCI(t, color)));
-      const words = q.split(/\s+/).filter(Boolean);
-      if (words.length > 0) {
-        ok =
-          ok &&
-          words.every((w) => includesCI(p.title, w) || includesCI(p.description, w) || p.tags.some((t) => includesCI(t, w)));
-      }
-      return ok;
-    });
+    const { color, cleanTokens, category } = extractIntent(q);
 
-    const sugg = allProducts.filter((p) => !filtered.includes(p)).slice(0, 12);
-    setResults(filtered.slice(0, 12));
+    const filtered = allProducts
+      .map(p => {
+        const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
+        let score = 0;
+
+        // bonus catégorie
+        if (category) {
+          const syns = CATEGORY_SYNONYMS[category] || [category];
+          if (syns.some(s => text.includes(s))) score += 4;
+        }
+
+        // bonus couleur
+        if (color && (text.includes(color))) score += 3;
+
+        // mots restants
+        for (const w of cleanTokens) {
+          if (COLORS.includes(w)) continue; // déjà compté
+          if (STOPWORDS.has(w)) continue;
+          if (text.includes(w)) score += 1;
+        }
+
+        return { p, score };
+      })
+      .sort((a,b) => b.score - a.score)
+      .map(x => x.p);
+
+    const strict = filtered.filter((_,i) => i < 12);
+    const sugg = allProducts.filter(p => !strict.includes(p)).slice(0, 12);
+
+    setResults(strict);
     setSuggestions(sugg);
     setShowAllSuggestions(false);
     setView("results");
   }
 
-  // ---------- Panier ----------
+  // ---------- Panier : ajout robuste ----------
   function addToCartByText(q: string) {
-    const { size } = extractIntent(q);
-    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const { size, color, cleanTokens, category } = extractIntent(q);
 
-    const candidates = allProducts.filter((p) => {
-      const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
-      return words.every((w) => text.includes(w));
-    });
-    const target = candidates[0] ?? allProducts[0];
+    const scored = allProducts
+      .map(p => {
+        const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
+        let score = 0;
+
+        if (category) {
+          const syns = CATEGORY_SYNONYMS[category] || [category];
+          if (syns.some(s => text.includes(s))) score += 5;
+        }
+        if (color && text.includes(color)) score += 4;
+
+        for (const w of cleanTokens) {
+          if (STOPWORDS.has(w) || COLORS.includes(w)) continue;
+          if (text.includes(w)) score += 1;
+        }
+        return { p, score };
+      })
+      .sort((a,b) => b.score - a.score);
+
+    const target = scored[0]?.p ?? allProducts[0];
     if (!target) {
       setTranscript("Je n'ai pas trouvé de produit à ajouter.");
       return;
@@ -231,24 +288,25 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           v.title.toLowerCase() === `taille ${size.toLowerCase()}`
       );
     }
-    if (!chosen) chosen = target.variants.find((v) => v.available) ?? target.variants[0];
+    if (!chosen) chosen = target.variants.find(v => v.available) ?? target.variants[0];
     if (!chosen) {
       setTranscript("Aucune variante disponible pour ce produit.");
       return;
     }
 
-    setCart((prev) => {
-      const found = prev.find((i) => i.productId === target.id && i.variantId === chosen!.id);
+    setCart(prev => {
+      const found = prev.find(i => i.productId === target.id && i.variantId === chosen!.id);
       if (found) {
-        return prev.map((i) =>
+        return prev.map(i =>
           i.productId === target.id && i.variantId === chosen!.id ? { ...i, qty: i.qty + 1 } : i
         );
       }
-      return [...prev, { productId: target.id, variantId: chosen.id, qty: 1 }];
+      return [...prev, { productId: target.id, variantId: chosen!.id, qty: 1 }];
     });
 
     setTranscript(`✅ Ajouté au panier : ${target.title} (${chosen.title})`);
     setView("results");
+    setShowCart(true); // ouvrir le panier après ajout (meilleure UX)
   }
 
   function clearCart() {
@@ -272,24 +330,28 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       return;
     }
     const { isAdd, isClear, isCheckout } = extractIntent(q);
-    if (isClear) {
-      clearCart();
-      return;
-    }
-    if (isCheckout) {
-      setTranscript("🧾 (Démo) Ouverture du panier…");
-      setView("results");
-      return;
-    }
-    if (isAdd) {
-      addToCartByText(q);
-      return;
-    }
+    if (isClear) { clearCart(); return; }
+    if (isCheckout) { setTranscript("🧾 (Démo) Ouverture du panier…"); setShowCart(true); setView("results"); return; }
+    if (isAdd) { addToCartByText(q); return; }
     setTranscript(`D'accord, je cherche ${q}.`);
     searchProducts(q);
   }
 
   const cartCount = React.useMemo(() => cart.reduce((n, it) => n + it.qty, 0), [cart]);
+
+  // Pour afficher les lignes du panier
+  const productById = React.useCallback((id: string) => allProducts.find(p => p.id === id), [allProducts]);
+  const variantById = (p: Product | undefined, id: string) => p?.variants.find(v => v.id === id);
+
+  const cartTotal = React.useMemo(() => {
+    let sum = 0;
+    for (const it of cart) {
+      const p = productById(it.productId);
+      const v = variantById(p, it.variantId);
+      if (p && v) sum += v.price * it.qty;
+    }
+    return sum;
+  }, [cart, productById]);
 
   // ---------- Rendu ----------
   return (
@@ -323,7 +385,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         🎙️
       </button>
 
-      {/* Fenêtre */}
+      {/* Fenêtre principale */}
       <div
         style={{
           width: 380,
@@ -333,11 +395,10 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           boxShadow: "0 20px 40px rgba(0,0,0,.18)",
           display: "flex",
           flexDirection: "column",
-          // hauteur fixe + zone centrale scrollable
           maxHeight: 640,
         }}
       >
-        {/* Barre titre STICKY */}
+        {/* Barre sticky */}
         <div
           style={{
             position: "sticky",
@@ -355,12 +416,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           }}
         >
           <span>Voice Assistant</span>
-          {view === "results" && (
+          <div style={{ display: "flex", gap: 8 }}>
             <button
-              onClick={goHome}
-              title="Retour à l’accueil"
+              onClick={() => setShowCart(true)}
+              title="Voir le panier"
               style={{
-                background: "#0284c7",
+                background: "#22c55e",
                 color: "#fff",
                 border: "none",
                 borderRadius: 8,
@@ -369,12 +430,29 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                 fontSize: 12,
               }}
             >
-              ⬅️ Accueil
+              🧺 Panier ({cartCount})
             </button>
-          )}
+            {view === "results" && (
+              <button
+                onClick={goHome}
+                title="Retour à l’accueil"
+                style={{
+                  background: "#0284c7",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                ⬅️ Accueil
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* CONTENU SCROLLABLE */}
+        {/* Contenu scrollable */}
         <div style={{ overflowY: "auto", padding: 12 }}>
           {/* Messages */}
           <div style={{ minHeight: 24, marginBottom: 8 }}>
@@ -467,7 +545,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                 Effacer
               </button>
               <button
-                onClick={() => setTranscript(`Panier : ${cartCount} article(s).`)}
+                onClick={() => setShowCart(true)}
                 style={{
                   background: "#22c55e",
                   color: "#fff",
@@ -571,6 +649,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                               },
                             ]);
                             setTranscript(`✅ Ajouté : ${p.title} — ${firstAvailable.title}`);
+                            setShowCart(true);
                           }}
                           style={{
                             background: "#0ea5e9",
@@ -591,7 +670,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             </div>
           )}
 
-          {/* Suggestions repliables */}
+          {/* Suggestions */}
           {suggestions.length > 0 && (
             <div
               style={{
@@ -676,7 +755,168 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             </div>
           )}
         </div>
-        {/* FIN contenu scrollable */}
+
+        {/* ---------- PANNEAU PANIER ---------- */}
+        {showCart && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(0,0,0,0.35)",
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "flex-end",
+              borderRadius: 14,
+            }}
+            onClick={() => setShowCart(false)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                maxWidth: 360,
+                background: "#fff",
+                borderTopLeftRadius: 14,
+                borderTopRightRadius: 14,
+                boxShadow: "0 -10px 30px rgba(0,0,0,.3)",
+                padding: 12,
+                maxHeight: 520,
+                overflowY: "auto",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>🧺 Panier</div>
+                <button
+                  onClick={() => setShowCart(false)}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    background: "#f8fafc",
+                    borderRadius: 8,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Fermer
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                {cart.length === 0 && <div style={{ color: "#64748b" }}>Votre panier est vide.</div>}
+                {cart.map((it, idx) => {
+                  const p = productById(it.productId);
+                  const v = variantById(p, it.variantId);
+                  if (!p || !v) return null;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "56px 1fr auto",
+                        gap: 10,
+                        alignItems: "center",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 10,
+                        padding: 8,
+                      }}
+                    >
+                      <FallbackImage
+                        src={p.image}
+                        alt={p.title}
+                        width={56}
+                        height={56}
+                        style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>
+                          Variante : {v.title} — {formatPrice(v.price, v.currency)}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                          <button
+                            onClick={() =>
+                              setCart(prev =>
+                                prev
+                                  .map(ci =>
+                                    ci.productId === it.productId && ci.variantId === it.variantId
+                                      ? { ...ci, qty: clamp(ci.qty - 1, 0, 999) }
+                                      : ci
+                                  )
+                                  .filter(ci => ci.qty > 0)
+                              )
+                            }
+                            style={{ border: "1px solid #e5e7eb", background: "#fff", borderRadius: 6, padding: "2px 8px" }}
+                          >
+                            −
+                          </button>
+                          <div style={{ minWidth: 24, textAlign: "center" }}>{it.qty}</div>
+                          <button
+                            onClick={() =>
+                              setCart(prev =>
+                                prev.map(ci =>
+                                  ci.productId === it.productId && ci.variantId === it.variantId
+                                    ? { ...ci, qty: clamp(ci.qty + 1, 1, 999) }
+                                    : ci
+                                )
+                              )
+                            }
+                            style={{ border: "1px solid #e5e7eb", background: "#fff", borderRadius: 6, padding: "2px 8px" }}
+                          >
+                            +
+                          </button>
+                          <button
+                            onClick={() =>
+                              setCart(prev =>
+                                prev.filter(ci => !(ci.productId === it.productId && ci.variantId === it.variantId))
+                              )
+                            }
+                            style={{
+                              border: "1px solid #fecaca",
+                              background: "#fee2e2",
+                              color: "#991b1b",
+                              borderRadius: 6,
+                              padding: "2px 8px",
+                              marginLeft: 8,
+                            }}
+                          >
+                            Retirer
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 700 }}>
+                        {formatPrice(v.price * it.qty, v.currency)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, alignItems: "center" }}>
+                <div>Total</div>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>
+                  {allProducts[0]?.variants[0]?.currency
+                    ? formatPrice(cartTotal, allProducts[0].variants[0].currency)
+                    : `${cartTotal.toFixed(2)} €`}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button
+                  onClick={() => setShowCart(false)}
+                  style={{ flex: 1, background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 10, padding: "10px 12px" }}
+                >
+                  Continuer mes achats
+                </button>
+                <button
+                  onClick={() => setTranscript("🧾 (Démo) Redirection vers le checkout…")}
+                  style={{ flex: 1, background: "#22c55e", color: "#fff", border: "none", borderRadius: 10, padding: "10px 12px" }}
+                >
+                  Passer au paiement
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* ---------- FIN PANNEAU PANIER ---------- */}
       </div>
     </div>
   );
