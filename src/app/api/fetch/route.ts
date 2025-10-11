@@ -1,26 +1,67 @@
 // src/app/api/fetch/route.ts
 import { NextResponse } from "next/server";
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+const MAX_BYTES = 2_000_000; // 2 Mo
+const TIMEOUT_MS = 8000;
+
+function isHttpUrl(u: string) {
+  try {
+    const url = new URL(u);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
   const target = searchParams.get("url");
-  if (!target) {
-    return NextResponse.json({ error: "Missing 'url' query param" }, { status: 400 });
+  if (!target || !isHttpUrl(target)) {
+    return NextResponse.json({ error: "Paramètre 'url' manquant ou invalide." }, { status: 400 });
   }
 
-  try {
-    const res = await fetch(target, { next: { revalidate: 0 } });
-    const text = await res.text();
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-    return new NextResponse(text, {
-      status: res.status,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Content-Type": res.headers.get("content-type") || "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
+  try {
+    const res = await fetch(target, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      signal: controller.signal,
     });
+
+    clearTimeout(to);
+
+    if (!res.ok) {
+      return NextResponse.json({ error: `Erreur HTTP ${res.status}` }, { status: 502 });
+    }
+
+    // Limite de taille via en-tête
+    const len = Number(res.headers.get("content-length") || "0");
+    if (len && len > MAX_BYTES) {
+      return NextResponse.json({ error: "Fichier trop volumineux." }, { status: 413 });
+    }
+
+    // Lis le JSON (et recontrôle la taille après lecture)
+    const text = await res.text();
+    if (text.length > MAX_BYTES) {
+      return NextResponse.json({ error: "Fichier trop volumineux." }, { status: 413 });
+    }
+
+    // Tente de parser JSON
+    try {
+      const json = JSON.parse(text);
+      return NextResponse.json(json, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    } catch {
+      return NextResponse.json({ error: "Réponse distante non-JSON." }, { status: 415 });
+    }
   } catch (e: any) {
-    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+    const aborted = e?.name === "AbortError";
+    return NextResponse.json(
+      { error: aborted ? "Délai dépassé" : "Échec du chargement distant" },
+      { status: aborted ? 504 : 502 }
+    );
   }
 }

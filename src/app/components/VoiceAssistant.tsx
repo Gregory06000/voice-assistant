@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Fuse from "fuse.js";
 
 // ---------- Types ----------
 type Variant = {
@@ -8,7 +9,7 @@ type Variant = {
   title: string;
   price: number;
   currency: string;
-  available: boolean;
+  available?: boolean;
 };
 
 type Product = {
@@ -28,32 +29,36 @@ type CartItem = {
 
 type Props = {
   welcomeMessage?: string;
-  products?: Product[];
+  products?: Product[];          // catalogue externe (sinon on charge le local)
+  brandColor?: string;           // couleur du bandeau (ex: "#ff6600")
+  ttsEnabled?: boolean;          // activer le retour vocal (via ?tts=1)
 };
 
 // ---------- Utils ----------
 function formatPrice(p: number, c: string) {
-  try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: c }).format(p);
-  } catch {
-    return `${p.toFixed(2)} ${c}`;
-  }
+  try { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: c }).format(p); }
+  catch { return `${p.toFixed(2)} ${c}`; }
 }
-function includesCI(hay: string, needle: string) {
-  return hay.toLowerCase().includes(needle.toLowerCase());
-}
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
+function includesCI(hay: string, needle: string) { return hay.toLowerCase().includes(needle.toLowerCase()); }
+function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
+function speak(tts: boolean, text: string) {
+  if (!tts) return;
+  if (typeof window === "undefined") return;
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "fr-FR";
+  window.speechSynthesis.speak(u);
 }
 
 // ---------- Fallback Image ----------
 function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [errored, setErrored] = React.useState(false);
-  const { alt, ...rest } = props;
+  const { alt, loading, ...rest } = props;
   const placeholder = "https://via.placeholder.com/72x72?text=%20";
   return (
     <img
       alt={alt || ""}
+      loading={loading ?? "lazy"}
       onError={() => setErrored(true)}
       {...rest}
       src={errored || !props.src ? placeholder : (props.src as string)}
@@ -61,8 +66,21 @@ function FallbackImage(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   );
 }
 
+// ---------- Catégories / couleurs / stopwords ----------
+const STOPWORDS = new Set([
+  "ajoute","ajouter","mets","mettre","met","dans","au","aux","à","le","la","les","un","une","des","du","de","d",
+  "panier","stp","svp","s'il","te","plaît","en","et","sur","pour","me","moi","lequel","laquelle"
+]);
+const CATEGORY_SYNONYMS: Record<string,string[]> = {
+  baskets: ["basket","baskets","sneaker","sneakers","chaussure","chaussures"],
+  chemise: ["chemise","chemises","shirt"],
+  robe: ["robe","robes","dress"],
+  pantalon: ["pantalon","pantalons","chino","jean","jeans"]
+};
+const COLORS = ["noir","noire","noires","bleu","bleue","bleues","blanc","blanche","blanches","rouge","rouges","beige","vert","verte"];
+
 // ---------- Composant principal ----------
-export default function VoiceAssistant({ welcomeMessage, products }: Props) {
+export default function VoiceAssistant({ welcomeMessage, products, brandColor, ttsEnabled = false }: Props) {
   // Navigation
   const [view, setView] = React.useState<"home" | "results">("home");
 
@@ -75,7 +93,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
   const [results, setResults] = React.useState<Product[]>([]);
   const [suggestions, setSuggestions] = React.useState<Product[]>([]);
   const [showAllSuggestions, setShowAllSuggestions] = React.useState(false);
-  const [showCart, setShowCart] = React.useState(false); // ⬅️ NOUVEAU : panneau panier
+  const [showCart, setShowCart] = React.useState(false);
 
   // Panier
   const [cart, setCart] = React.useState<CartItem[]>(() => {
@@ -83,9 +101,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     try {
       const raw = window.localStorage.getItem("va_cart");
       return raw ? (JSON.parse(raw) as CartItem[]) : [];
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   });
 
   // Catalogue local si rien n'est passé
@@ -100,10 +116,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           if (!r.ok) continue;
           const data = await r.json();
           const arr = Array.isArray(data) ? data : Array.isArray(data?.products) ? data.products : null;
-          if (arr) {
-            setLocalProducts(arr as Product[]);
-            return;
-          }
+          if (arr) { setLocalProducts(arr as Product[]); return; }
         } catch {}
       }
     })();
@@ -114,11 +127,23 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     [products, localProducts]
   );
 
+  // Sauvegarde panier
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("va_cart", JSON.stringify(cart));
     }
   }, [cart]);
+
+  // Tracking simple
+  async function track(event: string, payload: any = {}) {
+    try {
+      await fetch("/api/telemetry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, payload, ts: Date.now() }),
+      });
+    } catch {}
+  }
 
   // ---------- Reconnaissance vocale ----------
   const recognitionRef = React.useRef<any | null>(null);
@@ -136,6 +161,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         const t = ev.results?.[0]?.[0]?.transcript || "";
         setQuery(t);
         setTranscript(`🗣️ ${t}`);
+        track("speech_result", { t });
       };
       recognitionRef.current.onend = () => setListening(false);
       recognitionRef.current.onerror = () => setListening(false);
@@ -149,25 +175,15 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     }
     setListening(true);
     recognitionRef.current!.start();
+    track("speech_start");
   }
   function stopListening() {
     try { recognitionRef.current?.stop(); } catch {}
     setListening(false);
+    track("speech_stop");
   }
 
-  // ---------- NLU simple + scoring ----------
-  const STOPWORDS = new Set([
-    "ajoute","ajouter","mets","mettre","met","dans","au","aux","à","le","la","les","un","une","des","du","de","d",
-    "panier","stp","s'il","te","plaît","svp","en","et","sur","pour","me","moi","lequel","laquelle"
-  ]);
-  const CATEGORY_SYNONYMS: Record<string,string[]> = {
-    baskets: ["basket","baskets","sneaker","sneakers","chaussure","chaussures"],
-    chemise: ["chemise","chemises","shirt","chem"],
-    robe: ["robe","robes","dress"],
-    pantalon: ["pantalon","pantalons","chino","jean","jeans"]
-  };
-  const COLORS = ["noir","noire","noires","bleu","bleue","bleues","blanc","blanche","blanches","rouge","rouges","beige","vert","verte"];
-
+  // ---------- NLU / tokens ----------
   function normalizeSizeToken(tok: string) {
     const t = tok.trim().toLowerCase();
     const known = ["xs","s","m","l","xl","xxl","xxxl"];
@@ -176,7 +192,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     if (!isNaN(num)) return String(num);
     return null;
   }
-
   function tokenizeMeaningful(raw: string) {
     return raw
       .toLowerCase()
@@ -184,14 +199,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       .filter(Boolean)
       .filter(w => !STOPWORDS.has(w));
   }
-
   function guessCategory(tokens: string[]): string | null {
     for (const [cat, syns] of Object.entries(CATEGORY_SYNONYMS)) {
       if (tokens.some(t => syns.includes(t))) return cat;
     }
     return null;
   }
-
   function extractIntent(q: string) {
     const raw = q.toLowerCase();
     const isAdd = /(ajoute|mets?|mettre)\s(au|dans)\s(le\s)?panier/.test(raw);
@@ -201,82 +214,84 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     const tokens = raw.split(/\s+/).filter(Boolean);
     let size: string | null = null;
     for (let i = tokens.length - 1; i >= 0; i--) {
-      const n = normalizeSizeToken(tokens[i]);
-      if (n) { size = n; break; }
+      const n = normalizeSizeToken(tokens[i]); if (n) { size = n; break; }
     }
     const color = COLORS.find(c => raw.includes(c)) || null;
 
     const cleanTokens = tokenizeMeaningful(raw);
     const category = guessCategory(cleanTokens);
-
     return { isAdd, isClear, isCheckout, size, color, cleanTokens, category, raw };
   }
 
-  // ---------- Recherche ----------
-  function searchProducts(q: string) {
-    const { color, cleanTokens, category } = extractIntent(q);
+  // ---------- Fuse index (fuzzy) ----------
+  const fuseRef = React.useRef<Fuse<Product> | null>(null);
+  React.useEffect(() => {
+    if (!allProducts.length) { fuseRef.current = null; return; }
+    fuseRef.current = new Fuse(allProducts, {
+      keys: ["title", "description", "tags"],
+      includeScore: true,
+      threshold: 0.4, // tolérance aux fautes (0 = strict, 1 = très permissif)
+      ignoreLocation: true,
+    });
+  }, [allProducts]);
 
-    const filtered = allProducts
+  // ---------- Recherche (fuzzy + rerank) ----------
+  function rerankByIntent(list: Product[], color: string | null, category: string | null, extraWords: string[]) {
+    return list
       .map(p => {
         const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
         let score = 0;
-
-        // bonus catégorie
         if (category) {
           const syns = CATEGORY_SYNONYMS[category] || [category];
           if (syns.some(s => text.includes(s))) score += 4;
         }
-
-        // bonus couleur
-        if (color && (text.includes(color))) score += 3;
-
-        // mots restants
-        for (const w of cleanTokens) {
-          if (COLORS.includes(w)) continue; // déjà compté
-          if (STOPWORDS.has(w)) continue;
+        if (color && text.includes(color)) score += 3;
+        for (const w of extraWords) {
+          if (COLORS.includes(w) || STOPWORDS.has(w)) continue;
           if (text.includes(w)) score += 1;
         }
-
         return { p, score };
       })
       .sort((a,b) => b.score - a.score)
       .map(x => x.p);
+  }
 
-    const strict = filtered.filter((_,i) => i < 12);
+  function searchProducts(q: string) {
+    const { color, cleanTokens, category } = extractIntent(q);
+    let list: Product[] = [];
+
+    if (fuseRef.current && q.trim()) {
+      const res = fuseRef.current.search(q);
+      list = res.map(r => r.item);
+      // rerank selon couleur/catégorie/mots
+      list = rerankByIntent(list, color, category, cleanTokens);
+    } else {
+      list = allProducts.slice();
+    }
+
+    const strict = list.slice(0, 12);
     const sugg = allProducts.filter(p => !strict.includes(p)).slice(0, 12);
 
     setResults(strict);
     setSuggestions(sugg);
     setShowAllSuggestions(false);
     setView("results");
+    track("search", { q, results: strict.length });
   }
 
-  // ---------- Panier : ajout robuste ----------
+  // ---------- Panier : ajout robuste (fuzzy + scoring) ----------
   function addToCartByText(q: string) {
     const { size, color, cleanTokens, category } = extractIntent(q);
 
-    const scored = allProducts
-      .map(p => {
-        const text = (p.title + " " + p.description + " " + p.tags.join(" ")).toLowerCase();
-        let score = 0;
-
-        if (category) {
-          const syns = CATEGORY_SYNONYMS[category] || [category];
-          if (syns.some(s => text.includes(s))) score += 5;
-        }
-        if (color && text.includes(color)) score += 4;
-
-        for (const w of cleanTokens) {
-          if (STOPWORDS.has(w) || COLORS.includes(w)) continue;
-          if (text.includes(w)) score += 1;
-        }
-        return { p, score };
-      })
-      .sort((a,b) => b.score - a.score);
-
-    const target = scored[0]?.p ?? allProducts[0];
+    let candidates: Product[] = allProducts.slice();
+    if (fuseRef.current && q.trim()) {
+      candidates = fuseRef.current.search(q).map(r => r.item);
+    }
+    const scored = rerankByIntent(candidates, color, category, cleanTokens);
+    const target = scored[0] ?? allProducts[0];
     if (!target) {
       setTranscript("Je n'ai pas trouvé de produit à ajouter.");
+      speak(ttsEnabled, "Je n'ai pas trouvé de produit à ajouter.");
       return;
     }
 
@@ -291,6 +306,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     if (!chosen) chosen = target.variants.find(v => v.available) ?? target.variants[0];
     if (!chosen) {
       setTranscript("Aucune variante disponible pour ce produit.");
+      speak(ttsEnabled, "Aucune variante disponible pour ce produit.");
       return;
     }
 
@@ -304,14 +320,19 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       return [...prev, { productId: target.id, variantId: chosen!.id, qty: 1 }];
     });
 
-    setTranscript(`✅ Ajouté au panier : ${target.title} (${chosen.title})`);
+    const msg = `Ajouté au panier: ${target.title}, ${chosen.title}`;
+    setTranscript("✅ " + msg);
+    speak(ttsEnabled, msg);
     setView("results");
-    setShowCart(true); // ouvrir le panier après ajout (meilleure UX)
+    setShowCart(true);
+    track("add_to_cart", { q, productId: target.id, variantId: chosen.id });
   }
 
   function clearCart() {
     setCart([]);
     setTranscript("🧺 Panier vidé.");
+    speak(ttsEnabled, "Panier vidé.");
+    track("clear_cart");
   }
 
   // ---------- Navigation ----------
@@ -327,11 +348,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
     const q = (query || "").trim();
     if (!q) {
       setTranscript("Je n'ai rien entendu. Clique sur 🎙️ et essaie encore.");
+      speak(ttsEnabled, "Je n'ai rien entendu.");
       return;
     }
     const { isAdd, isClear, isCheckout } = extractIntent(q);
     if (isClear) { clearCart(); return; }
-    if (isCheckout) { setTranscript("🧾 (Démo) Ouverture du panier…"); setShowCart(true); setView("results"); return; }
+    if (isCheckout) { setTranscript("🧾 (Démo) Ouverture du panier…"); setShowCart(true); setView("results"); track("checkout_attempt"); return; }
     if (isAdd) { addToCartByText(q); return; }
     setTranscript(`D'accord, je cherche ${q}.`);
     searchProducts(q);
@@ -339,10 +361,9 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
 
   const cartCount = React.useMemo(() => cart.reduce((n, it) => n + it.qty, 0), [cart]);
 
-  // Pour afficher les lignes du panier
+  // Utils d’affichage panier
   const productById = React.useCallback((id: string) => allProducts.find(p => p.id === id), [allProducts]);
   const variantById = (p: Product | undefined, id: string) => p?.variants.find(v => v.id === id);
-
   const cartTotal = React.useMemo(() => {
     let sum = 0;
     for (const it of cart) {
@@ -354,6 +375,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
   }, [cart, productById]);
 
   // ---------- Rendu ----------
+  const headerColor = brandColor || "#0ea5e9";
+
   return (
     <div
       style={{
@@ -368,6 +391,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
       <button
         onClick={() => (listening ? stopListening() : startListening())}
         title="Parler"
+        aria-label="Parler"
         style={{
           position: "absolute",
           right: 0,
@@ -376,7 +400,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           height: 48,
           borderRadius: 999,
           border: "none",
-          background: listening ? "#f43f5e" : "#0ea5e9",
+          background: listening ? "#f43f5e" : headerColor,
           color: "#fff",
           boxShadow: "0 10px 24px rgba(0,0,0,.2)",
           cursor: "pointer",
@@ -404,7 +428,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             position: "sticky",
             top: 0,
             zIndex: 2,
-            background: "#0ea5e9",
+            background: headerColor,
             color: "#fff",
             padding: "10px 12px",
             fontWeight: 700,
@@ -420,6 +444,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
             <button
               onClick={() => setShowCart(true)}
               title="Voir le panier"
+              aria-label="Voir le panier"
               style={{
                 background: "#22c55e",
                 color: "#fff",
@@ -436,6 +461,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
               <button
                 onClick={goHome}
                 title="Retour à l’accueil"
+                aria-label="Retour à l’accueil"
                 style={{
                   background: "#0284c7",
                   color: "#fff",
@@ -455,7 +481,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         {/* Contenu scrollable */}
         <div style={{ overflowY: "auto", padding: 12 }}>
           {/* Messages */}
-          <div style={{ minHeight: 24, marginBottom: 8 }}>
+          <div style={{ minHeight: 24, marginBottom: 8 }} aria-live="polite">
             {view === "home" && (
               <div style={{ fontSize: 14 }}>
                 {welcomeMessage || "Bienvenue 👋 ! Dis-moi ce que tu cherches 😊"}
@@ -520,7 +546,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                 onClick={handleSearch}
                 style={{
                   flex: 1,
-                  background: "#0ea5e9",
+                  background: headerColor,
                   color: "#fff",
                   border: "none",
                   borderRadius: 10,
@@ -599,26 +625,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                       alt={p.title}
                       width={72}
                       height={72}
-                      style={{
-                        width: 72,
-                        height: 72,
-                        objectFit: "cover",
-                        borderRadius: 8,
-                      }}
+                      style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8 }}
                     />
                     <div>
                       <div style={{ fontWeight: 700 }}>{p.title}</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>
-                        {p.description}
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          marginTop: 6,
-                          flexWrap: "wrap",
-                        }}
-                      >
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{p.description}</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
                         {p.variants.map((v) => (
                           <div
                             key={v.id}
@@ -637,22 +649,20 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                       <div style={{ marginTop: 8 }}>
                         <button
                           onClick={() => {
-                            const firstAvailable =
-                              p.variants.find((v) => v.available) ?? p.variants[0];
+                            const firstAvailable = p.variants.find((v) => v.available) ?? p.variants[0];
                             if (!firstAvailable) return;
                             setCart((prev) => [
                               ...prev,
-                              {
-                                productId: p.id,
-                                variantId: firstAvailable.id,
-                                qty: 1,
-                              },
+                              { productId: p.id, variantId: firstAvailable.id, qty: 1 },
                             ]);
-                            setTranscript(`✅ Ajouté : ${p.title} — ${firstAvailable.title}`);
+                            const msg = `Ajouté: ${p.title} — ${firstAvailable.title}`;
+                            setTranscript("✅ " + msg);
+                            speak(ttsEnabled, msg);
                             setShowCart(true);
+                            track("add_to_cart_button", { productId: p.id, variantId: firstAvailable.id });
                           }}
                           style={{
-                            background: "#0ea5e9",
+                            background: headerColor,
                             color: "#fff",
                             border: "none",
                             borderRadius: 8,
@@ -673,12 +683,7 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
           {/* Suggestions */}
           {suggestions.length > 0 && (
             <div
-              style={{
-                background: "#fff",
-                borderRadius: 12,
-                border: "1px solid #e5e7eb",
-                padding: 12,
-              }}
+              style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 12 }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ fontWeight: 800 }}>Tu pourrais aimer aussi</div>
@@ -696,7 +701,6 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                   {showAllSuggestions ? "Réduire" : "Afficher plus"}
                 </button>
               </div>
-
               <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
                 {(showAllSuggestions ? suggestions : suggestions.slice(0, 3)).map((p) => (
                   <div
@@ -713,26 +717,12 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
                       alt={p.title}
                       width={72}
                       height={72}
-                      style={{
-                        width: 72,
-                        height: 72,
-                        objectFit: "cover",
-                        borderRadius: 8,
-                      }}
+                      style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8 }}
                     />
                     <div>
                       <div style={{ fontWeight: 700 }}>{p.title}</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>
-                        {p.description}
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          marginTop: 6,
-                          flexWrap: "wrap",
-                        }}
-                      >
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{p.description}</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
                         {p.variants.map((v) => (
                           <div
                             key={v.id}
@@ -759,6 +749,8 @@ export default function VoiceAssistant({ welcomeMessage, products }: Props) {
         {/* ---------- PANNEAU PANIER ---------- */}
         {showCart && (
           <div
+            role="dialog"
+            aria-modal="true"
             style={{
               position: "absolute",
               inset: 0,
